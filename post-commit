@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+//please requist your app token from
+//https://trello.com/1/connect?key=yourkey&name=git-hook&expiration=never&response_type=token&scope=read,write
+console.log('*******************enter');
+var key = "95009037f66c58446105e36146f2002e";
+var token = "83a3ac5fb604855f8c016c18bea448569da0fce74bf560c38bfdf2492fb80c10";
+//https://trello.com/board/-/4e9003324a517dad44465056
+var board_id = "5220314229a662b930000820";
+var Trello = require("node-trello");
+var t = new Trello(key, token);
+var spawn = require('child_process').spawn;
+var git = spawn('git', ['log' , '-1' , 'HEAD']);
+var data = "";
+
+git.stdout.on('data',function(d){
+  data += d;
+});
+
+git.on('exit', function(){
+console.log('data:'+data);
+  var m = data.match(/(card|close|archive|fix)e?s? \D?([0-9]+)\s+:?\s+(.+)/i);
+  if(m){
+    var commit = data.match(/commit\s+(.+)/i)[1];
+    var author = data.match(/author:\s+([^<]+)/i)[1];
+    var date = data.match(/date:\s+(.+)/i)[1];  
+    var msg = m[3];   
+    //get card
+    get_card(board_id, m[2],function(err, data){
+      if(err) wran("[ERROR] Cannot find card matching ID " + m[2]);
+      else{
+        if(m[1].toLowerCase() === 'close'){
+          update_card(data['id'], {closed:true}, function(err, data){
+            if(err) throw err;
+            if(data.closed){
+              info('Congratulation! Close card:' + m[2] + "\n" + data.name);
+            }else{
+              warn('Close does not worked correct.');
+            }
+          });
+        }
+        if(/^fix/i.exec(m[1])){
+          var text = 'Commit by : '+ author + '\nDate : ' + date + '\nCommit : '+ commit + '\nMessage : ' + msg 
+          add_comment(data['id'], text, function (err,data){
+            if(err) throw err;
+            else info('Submit message for ' + m[2] + " : \n" + data.data.text);
+          });
+        }
+      }
+    });
+  }else{
+    warn('Do you work for production?');
+  }
+});
+
+var partition = "***************************************************************************";
+function info(msg){
+  console.log(partition);
+  console.log(msg);
+  console.log(partition);
+}
+
+function warn(msg){
+  console.warn(partition);
+  console.warn(msg);
+  console.warn(partition);
+}
+
+function logfun(err, data){
+  if(err) throw err;
+  console.log(data);
+}
+function get_card(board_id, card_id, fun){
+  fun = fun || logfun;
+  t.get("/1/boards/"+ board_id +"/cards/"+card_id, fun);
+}
+
+function update_card(card_id, params, fun){
+  fun = fun || logfun;
+  t.put("/1/cards/"+card_id, params, fun);
+}
+
+function add_comment(card_id, comment, fun ){
+  fun = fun || logfun;
+  t.post("/1/card/"+card_id+ "/actions/comments", {text: comment}, fun);
+}
+
+function get_cards(list_id, fun){
+  fun = fun || logfun;
+  t.get("/1/lists/"+list_id+"/cards", {fields: "idList,closed,name"}, fun)
+}
