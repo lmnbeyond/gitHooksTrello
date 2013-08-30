@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 //please requist your app token from
 //https://trello.com/1/connect?key=yourkey&name=git-hook&expiration=never&response_type=token&scope=read,write
-console.log('*******************enter');
 var key = "95009037f66c58446105e36146f2002e";
 var token = "83a3ac5fb604855f8c016c18bea448569da0fce74bf560c38bfdf2492fb80c10";
 //https://trello.com/board/-/4e9003324a517dad44465056
@@ -18,7 +17,7 @@ git.stdout.on('data',function(d){
 
 git.on('exit', function(){
 console.log('data:'+data);
-  var m = data.match(/(card|close|archive|fix)e?s? \D?([0-9]+)\s+:?\s+(.+)/i);
+  var m = data.match(/\[(card|close|archive|fix)e?s?d?-([0-9]+)\]\s+(.+)/i);
   if(m){
     var commit = data.match(/commit\s+(.+)/i)[1];
     var author = data.match(/author:\s+([^<]+)/i)[1];
