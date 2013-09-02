@@ -3,51 +3,63 @@
 //https://trello.com/1/connect?key=yourkey&name=git-hook&expiration=never&response_type=token&scope=read,write
 var key = "95009037f66c58446105e36146f2002e";
 var token = "83a3ac5fb604855f8c016c18bea448569da0fce74bf560c38bfdf2492fb80c10";
-//https://trello.com/board/-/4e9003324a517dad44465056
+//https://trello.com/board/-/5220314229a662b930000820
 var board_id = "5220314229a662b930000820";
 var Trello = require("node-trello");
 var t = new Trello(key, token);
-var spawn = require('child_process').spawn;
-var git = spawn('git', ['log' , '-1' , 'HEAD']);
+var cp = require('child_process');
+var git = cp.spawn('git', ['log' , '-1' , 'HEAD' , '--decorate=full']);
+  
+var gitweb_addr = 'http://git.polyvi.com/gitweb/';
 var data = "";
+var repo_name = "";
 
 git.stdout.on('data',function(d){
   data += d;
 });
 
 git.on('exit', function(){
-console.log('data:'+data);
-  var m = data.match(/\[(card|close|archive|fix)e?s?d?-([0-9]+)\]\s+(.+)/i);
+  var m = data.match(/\[(card|close|archive|fix)e?s?d?-([0-9]+)\](.+)/i);
   if(m){
-    var commit = data.match(/commit\s+(.+)/i)[1];
+    var commit_line = data.match(/commit\s+(.+)/i)[1];
+    var commit = commit_line.match(/(.+)\s+\(/)[1];
+    var branch = commit_line.match(/,\s+(.+)\)/)[1];
     var author = data.match(/author:\s+([^<]+)/i)[1];
-    var date = data.match(/date:\s+(.+)/i)[1];  
-    var msg = m[3];   
-    //get card
-    get_card(board_id, m[2],function(err, data){
-      if(err) wran("[ERROR] Cannot find card matching ID " + m[2]);
-      else{
-        if(m[1].toLowerCase() === 'close'){
-          update_card(data['id'], {closed:true}, function(err, data){
-            if(err) throw err;
-            if(data.closed){
-              info('Congratulation! Close card:' + m[2] + "\n" + data.name);
-            }else{
-              warn('Close does not worked correct.');
-            }
-          });
-        }
-        if(/^fix/i.exec(m[1])){
-          var text = 'Commit by : '+ author + '\nDate : ' + date + '\nCommit : '+ commit + '\nMessage : ' + msg 
-          add_comment(data['id'], text, function (err,data){
-            if(err) throw err;
-            else info('Submit message for ' + m[2] + " : \n" + data.data.text);
-          });
-        }
-      }
+    var date = data.match(/date:\s+(.+)/i)[1];
+    var msg = m[3];
+    
+    cp.exec('basename `git rev-parse --show-toplevel`',{}, function(err, stdout, stderr){
+		repo_name += stdout;
+		repo_name = repo_name.replace(/\n$/, '');
+		repo_name += '.git';
+
+		//get card
+		get_card(board_id, m[2],function(err, data){
+		  if(err) wran("[ERROR] Cannot find card matching ID " + m[2]);
+		  else{
+			if(/^fix/i.exec(m[1]) || m[1].toLowerCase() === 'close'){
+			  var text = gen_comment(commit, branch, author, date);
+			  add_comment(data['id'], text, function (err,ret_data){
+				if(err) throw err;
+				else 
+				{
+				  info('Added a comment for Trello Card #' + m[2] + " : \n" + ret_data.data.text);
+				  if(m[1].toLowerCase() === 'close'){
+					  update_card(data['id'], {closed:true}, function(err, ret_data){
+						if(err) throw err;
+						if(ret_data.closed){
+						  info('Congratulation! Close card:' + m[2] + "\n" + ret_data.name);
+						}else{
+						  warn('Close does not worked correct.');
+						}
+					  });
+					}
+				}
+			  });
+			} 
+		  }
+		});
     });
-  }else{
-    warn('Do you work for production?');
   }
 });
 
@@ -68,6 +80,22 @@ function logfun(err, data){
   if(err) throw err;
   console.log(data);
 }
+
+function gen_comment(commit, branch, author, date){
+  var gitwebUrl = gen_gitweb_url(commit);
+  var start = data.indexOf(date) + date.length;
+  var end   = data.length - 1;
+  var msg   = data.substring(start, end);
+
+  var comment = 'Commit : '+ commit + '\nIn branch : ' + branch + '\nFrom : '+ author + '\n[' + gitwebUrl + ']\t' + msg; 
+  return comment;
+}
+
+function gen_gitweb_url(commit){
+  var url = gitweb_addr + '?p=' + repo_name + ';a=commit;h=' + commit;
+  return url;
+}
+
 function get_card(board_id, card_id, fun){
   fun = fun || logfun;
   t.get("/1/boards/"+ board_id +"/cards/"+card_id, fun);
