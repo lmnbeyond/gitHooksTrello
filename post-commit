@@ -14,12 +14,15 @@ var gitweb_addr = 'http://git.polyvi.com/gitweb/';
 var data = "";
 var repo_name = "";
 
+var trello_lists = new Array(['to do','doing','done'],['5220314229a662b930000821','5220314229a662b930000822','5220314229a662b930000823']);     
+
+
 git.stdout.on('data',function(d){
   data += d;
 });
 
 git.on('exit', function(){
-  var m = data.match(/\[(card|close|archive|fix)e?s?d?-([0-9]+)\](.+)/i);
+  var m = data.match(/\[(.+)-([0-9]+)\](.+)/i);
   if(m){
     var commit_line = data.match(/commit\s+(.+)/i)[1];
     var commit = commit_line.match(/(.+)\s+\(/)[1];
@@ -27,6 +30,8 @@ git.on('exit', function(){
     var author = data.match(/author:\s+([^<]+)/i)[1];
     var date = data.match(/date:\s+(.+)/i)[1];
     var msg = m[3];
+    var cmd = m[1];
+    var card_id = m[2];
     
     cp.exec('basename `git rev-parse --show-toplevel`',{}, function(err, stdout, stderr){
 		repo_name += stdout;
@@ -34,30 +39,26 @@ git.on('exit', function(){
 		repo_name += '.git';
 
 		//get card
-		get_card(board_id, m[2],function(err, data){
-		  if(err) wran("[ERROR] Cannot find card matching ID " + m[2]);
+		get_card(board_id, card_id,function(err, data){
+		  if(err) warn("[ERROR] Cannot find card matching ID " + card_id);
 		  else{
-			if(/^fix/i.exec(m[1]) || m[1].toLowerCase() === 'close'){
-			  var text = gen_comment(commit, branch, author, date);
-			  add_comment(data['id'], text, function (err,ret_data){
-				if(err) throw err;
-				else 
-				{
-				  info('Added a comment for Trello Card #' + m[2] + " : \n" + ret_data.data.text);
-				  if(m[1].toLowerCase() === 'close'){
-					  update_card(data['id'], {closed:true}, function(err, ret_data){
-						if(err) throw err;
-						if(ret_data.closed){
-						  info('Congratulation! Close card:' + m[2] + "\n" + ret_data.name);
-						}else{
-						  warn('Close does not worked correct.');
-						}
-					  });
+		    var list_id = find_list_id_via_name(cmd);
+		    if(!list_id && !is_close_cmd(cmd)) warn("[ERROR] Invalid command: " + cmd);
+		    else{
+				if(!list_id) list_id = find_list_id_via_name('done');
+				console.log('list_id:' + list_id);
+				var text = gen_comment(commit, branch, author, date);
+				add_comment(data['id'], text, function (err,ret_data){
+					if(err) throw err;
+					else{
+					  info('Added a comment for Trello Card #' + card_id + " : \n" + ret_data.data.text);
+					  if(is_close_cmd(cmd)){
+						  close_card(data['id'], card_id);
+					   }
 					}
-				}
-			  });
-			} 
-		  }
+				});
+			  }
+			}
 		});
     });
   }
@@ -114,4 +115,34 @@ function add_comment(card_id, comment, fun ){
 function get_cards(list_id, fun){
   fun = fun || logfun;
   t.get("/1/lists/"+list_id+"/cards", {fields: "idList,closed,name"}, fun)
+}
+
+function move_card(card_id, list_id, fun){
+  fun = fun || logfun;
+  t.put();
+}
+
+function find_list_id_via_name(list_name){
+  var list_id;
+  for (i = 0; i < trello_lists[0].length; i++){
+    if(list_name.toLowerCase() === trello_lists[0][i].toLowerCase()){
+      list_id = trello_lists[1][i];
+    }
+  }
+  return list_id;
+}
+
+function is_close_cmd(cmd){
+  return cmd.toLowerCase() === "close" || cmd.toLowerCase() === "archive";
+}
+
+function close_card(data_id, card_id){
+	update_card(data_id, {closed:true}, function(err, data){
+		if(err) throw err;
+		if(data.closed){
+		  info('Congratulation! Close Trello card#:' + card_id + "\n" + data.name);
+		}else{
+		  warn('Close does not worked correct.');
+		}
+	});
 }
