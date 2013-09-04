@@ -5,6 +5,8 @@ var key = "95009037f66c58446105e36146f2002e";
 var token = "83a3ac5fb604855f8c016c18bea448569da0fce74bf560c38bfdf2492fb80c10";
 //https://trello.com/board/-/5220314229a662b930000820
 var board_id = "5220314229a662b930000820";
+
+var storage = require('node-persist');
 var Trello = require("node-trello");
 var t = new Trello(key, token);
 var exec = require('child_process').exec;
@@ -19,6 +21,19 @@ var trello_match;
 var list_id;
 var card_short_id;
 var card_long_id;
+var card_link;
+var current_closed_flag;
+var current_list_id;
+var move_over = true;
+var comment_over = false;
+var close_over = true;
+var timeout = 15000;
+var time_interval = 1000;
+var timeout_increment = 5000;
+var start_time;
+var timer;
+var refresh_trello_lists = false;
+var trello_lists_storage_id = 'trello_lists' + board_id;
 
 git_log.stdout.on('data',function(d){
   log_data += d;
@@ -33,52 +48,176 @@ git_log.on('exit', git_log_exit_callback);
 function git_log_exit_callback(){
   trello_match = log_data.match(/\[(.+)-([0-9]+)\](.+)/i);
   if(trello_match){
-    get_lists(board_id, get_lists_callback);
+    start_time = new Date().getTime();
+    
+    //get trello lists
+    storage.initSync();
+    trello_lists = storage.getItem(trello_lists_storage_id);
+	if(!trello_lists || refresh_trello_lists){
+		get_lists(board_id, get_lists_callback);
+	}else{
+	    check_list_id();
+	}
+
+    //get trello card
+	card_short_id = trello_match[2];
+	get_card(board_id, card_short_id, get_card_callback);
+	
+	get_repo_name();
+	
+	setTimer();
   }
 }
 
-function get_lists_callback(err, list_data){
-	if(err){
-		throw err;
-		return;
-	}
-
-	trello_lists = list_data;
-	var cmd = trello_match[1];
-
-	//check syntax
-	list_id = find_list_id_via_name(cmd);
-	if(!list_id && !is_close_cmd(cmd)){
-		warn("[ERROR] Invalid syntax: " + cmd);
-		return;
-	}
-	if(!list_id) list_id = find_list_id_via_name('done');
-
-	//get repo info
+function get_repo_name(){
 	exec('basename `git rev-parse --show-toplevel`',{}, get_repo_name_callback);
 }
 
-function get_repo_name_callback(err, stdout, stderr){
-    if(err){
-        warn('[ERROR] Failed to get repo name:' + err);
-        return;
-    }
-	repo_name += stdout;
-	repo_name = repo_name.replace(/\n$/, '');
-	repo_name += '.git';
+function get_lists_callback(err, list_data){
+	if(err) throw err;
+	timeout += timeout_increment;
+	trello_lists = list_data;
+	storage.setItem(trello_lists_storage_id, trello_lists);
+	
+    check_list_id();
+	query_callback();
+}
 
-	//get card
-	card_short_id = trello_match[2];
-	get_card(board_id, card_short_id, get_card_callback);
+function check_list_id(){
+    var cmd = trello_match[1];
+
+	//check list id
+	list_id = find_list_id_via_name(cmd);
+	if(!list_id && !is_close_cmd(cmd)){
+		warn("[ERROR] Invalid list name: " + cmd);
+		quit();
+		return;
+	}
+	if(!list_id) list_id = find_list_id_via_name('done');
 }
 
 function get_card_callback(err, data){
-	if(err){
-	    warn("[ERROR] Cannot find card matching ID:" + card_id);
-	    return;
-	}
+	if(err) throw err;
+	timeout += timeout_increment;
 	card_long_id = data['id'];
-	move_card_to_list(card_long_id, list_id);
+	card_link = data['shortUrl'];
+	current_closed_flag = data['closed'];
+	current_list_id = data['idList'];
+	
+	
+	if(!card_long_id){
+	    warn("[ERROR] Could not find the Trello Card #" + card_short_id);
+		quit();
+		return;
+	}
+
+	query_callback();
+}
+
+function get_repo_name_callback(err, stdout, stderr){
+    if(err) throw err;
+	repo_name += stdout;
+	repo_name = repo_name.replace(/\n$/, '');
+	repo_name += '.git';
+    
+    query_callback();
+}
+
+function query_callback(){
+	if(!repo_name || !card_long_id || !trello_lists || !list_id){
+		return;
+	}
+	
+	move_card();
+	comment_card();
+	close_card();	
+}
+
+function setTimer(){
+	timer = setInterval(function() {
+		if(clearTimer()){
+		    info_star('Congratulations! Please check it: ' + card_link);
+		    process.exit(0);
+		}else{
+			var elapsed = new Date().getTime() - start_time;
+			if(timeout <= elapsed){
+				warn('Sorry, timeout(' + elapsed + '), we have to kill it....');
+				process.exit(1);
+			}
+		}
+	}, time_interval);
+}
+
+function clearTimer(){
+//console.log('move_over:' + move_over + "  close_over:" + close_over + "  comment_over:" + comment_over);
+    if(move_over && close_over && comment_over){
+	    clearInterval(timer);
+	    return true;
+    }
+    return false;
+}
+
+function quit(){
+	clearInterval(timer);
+	process.exit(0);
+}
+
+function move_card(){
+    var list_name = find_list_name_via_id(list_id);
+    if(current_list_id === list_id){
+        info('Trello Card #' + card_short_id + ' is already in list "' +  list_name +'"!' );
+	    return;
+    }
+    move_over = false;
+	update_card(card_long_id, {idList:list_id}, function(err, data){
+	   if(err) throw err;
+	   else{
+	        timeout += timeout_increment;
+			info('Moved Trello Card #' + card_short_id + ' "' + data.name + '" to list "' + list_name + '"');
+			move_over = true;
+		 }
+	  });
+}
+
+function comment_card(){
+    var text = gen_comment();
+	add_comment(card_long_id, text, function (err, data){
+		if(err) throw err;
+		else{
+		  timeout += timeout_increment;
+		  info('Added a comment for Trello Card #' + card_short_id + ' "' + data.data.card.name + '": \n' + data.data.text);
+		  comment_over = true;
+		}
+	});
+}
+
+function close_card(){
+    var cmd = trello_match[1];
+    if(!is_close_cmd(cmd)){
+		return;
+    }
+
+	if(current_closed_flag){
+		info('Trello Card #' + card_short_id + ' is already archived!' );
+		return;
+	}
+	close_over = false;
+	update_card(card_long_id, {closed:true}, function (err, data){
+		if(err) throw err;
+		else{
+			timeout += timeout_increment;
+			close_over = true;
+			if(data.closed){
+				info('Archived Trello Card #' + data.idShort + ' "' + data.name + '"');
+			}else{
+				warn('Failed to close/archive Trello Card #' + data.idShort + ' "' + data.name + '"');
+			}
+		}
+	});
+}
+
+function is_close_cmd(cmd){
+  return cmd.toLowerCase() === "close" || cmd.toLowerCase() === "archive";
 }
 
 function gen_comment(){
@@ -122,62 +261,18 @@ function find_list_name_via_id(list_id){
   return list_name;
 }
 
-function move_card_to_list(card_long_id, list_id){
-	update_card(card_long_id, {idList:list_id}, function(err, data){
-	   if(err) throw err;
-	   else{
-	        var list_name = find_list_name_via_id(list_id);
-			info_up('Moved Trello Card #' + card_short_id + ' "' + data.name + '" to list "' + list_name + '"');
-
-			//add comment
-			var text = gen_comment();
-			add_comment(card_long_id, text, function (err, data){
-				if(err) throw err;
-				else{
-				  log('Added a comment for Trello Card #' + card_short_id + ' "' + data.data.card.name + '": \n' + data.data.text);
-				  var cmd = trello_match[1];
-				  if(is_close_cmd(cmd)){
-					  close_card(card_long_id);
-				   }
-				}
-			});
-		 }
-	  });
-}
-
-function is_close_cmd(cmd){
-  return cmd.toLowerCase() === "close" || cmd.toLowerCase() === "archive";
-}
-
-function close_card(card_id){
-	update_card(card_id, {closed:true}, close_card_callback);
-}
-
-function close_card_callback(err, data){
-	if(err) throw err;
-	if(data.closed){
-	  info_down('Congratulation! Archived Trello Card #' + data.idShort + ' "' + data.name + '"');
-	}else{
-	  warn('Failed to close/archive Trello Card #' + data.idShort + ' "' + data.name + '"');
-	}
-}
-
-var partition = "***************************************************************************";
-var partition1 = "---------------------------------------------------------------------------";
-function info_up(msg){
+var partition      = "---------------------------------------------------------------------------";
+var partition_star = "***************************************************************************";
+function info(msg){
   console.log(partition);
-  console.log(msg);
-  console.log(partition1);
-}
-
-function info_down(msg){
-  console.log(partition1);
   console.log(msg);
   console.log(partition);
 }
 
-function log(msg){
+function info_star(msg){
+  console.log(partition_star);
   console.log(msg);
+  console.log(partition_star);
 }
 
 function warn(msg){
@@ -203,7 +298,7 @@ function update_card(card_id, params, fun){
 
 function add_comment(card_id, comment, fun ){
   fun = fun || logfun;
-  t.post("/1/card/"+card_id+ "/actions/comments", {text: comment}, fun);
+  t.post("/1/cards/"+card_id+ "/actions/comments", {text: comment}, fun);
 }
 
 function get_cards(list_id, fun){
