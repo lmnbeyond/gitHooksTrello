@@ -38,6 +38,7 @@ var elapsed = 0;
 var refresh_trello_lists = false;
 var trello_lists_storage_id = 'trello_lists' + board_id;
 var query_callback_is_called = false;
+var log_progress = false;
 
 git_log.stdout.on('data',function(d){
   log_data += d;
@@ -143,7 +144,7 @@ function setTimer(){
 
 function time_interval_fun(){
   if(clearTimer()){
-    info_star('Congratulations! Please check it: ' + card_link);
+    info_star('Congratulations! Updated Trello Card #' + card_short_id + '\nPlease check it: ' + card_link);
     process.exit(0);
   }else{
     var current_loop_elapsed = new Date().getTime() - start_time;
@@ -294,12 +295,14 @@ function find_list_name_via_id(list_id){
   return list_name;
 }
 
-var partition      = "---------------------------------------------------------------------------";
-var partition_star = "***************************************************************************";
+var partition      = "--------------------------------------------------------------";
+var partition_star = "**************************************************************";
 function info(msg){
-  console.log(partition);
-  console.log(msg);
-  console.log(partition);
+  if(log_progress){
+    console.log(partition);
+    console.log(msg);
+    console.log(partition);
+  }
 }
 
 function info_star(msg){
