@@ -57,19 +57,19 @@ function git_log_exit_callback(){
     //get trello lists
     storage.initSync();
     trello_lists = storage.getItem(trello_lists_storage_id);
-	if(!trello_lists || refresh_trello_lists){
-		get_lists(board_id, get_lists_callback);
-	}else{
-	    check_list_id();
-	}
+    if(!trello_lists || refresh_trello_lists){
+      get_lists(board_id, get_lists_callback);
+    }else{
+      check_list_id();
+    }
 
     //get trello card
-	card_short_id = trello_match[2];
-	get_card(board_id, card_short_id, get_card_callback);
+    card_short_id = trello_match[2];
+    get_card(board_id, card_short_id, get_card_callback);
 
-	get_repo_name();
+    get_repo_name();
 
-	setTimer();
+    setTimer();
   }
 }
 
